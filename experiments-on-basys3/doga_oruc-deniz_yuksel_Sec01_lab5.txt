@@ -1,0 +1,628 @@
+// LAB 05, DENÝZ YÜKSEL 21600880 FT. DOÐA ORUÇ 21602022.
+// ALL CODES!
+
+// MIPS
+
+`timescale 1ns / 1ps
+// Written by David_Harris@hmc.edu
+// Top level system including MIPS and memories
+
+module topForBasys(input logic clk, reset, clear, switch, output logic[12:0] LED, output logic [3:0] anode, output logic [6:0] cathode, output logic DP);
+    logic puls, memwrite;
+    logic[31:0] dataadr, writedata, pc, instr;
+    display_controller dispplayer(clk, clear, 4'b1111, writedata[7:4], writedata[3:0], dataadr[7:4], dataadr[3:0], anode, cathode, DP);
+	pulse_controller pulsecont(clk, switch, clear, puls);
+	top top(puls, reset, writedata, dataadr, pc, instr, memwrite, LED);
+endmodule
+
+
+module top(input logic clk, reset, output logic [31:0] writedata, dataadr, pc, instr, output logic memwrite, output logic[12:0] leds);  
+    logic[31:0] readdata;
+    mips mips(clk, reset, pc, instr, memwrite, dataadr, writedata, readdata, leds);
+    imem imem(pc, instr);
+    dmem dmem(clk, memwrite, dataadr, writedata, readdata);
+endmodule
+
+module dmem(input logic clk, we, input logic[31:0] a, wd, output logic[31:0] rd);
+    logic[31:0] RAM[63:0];
+    assign rd = RAM[a[31:2]];// word-aligned  read (for lw)
+    always_ff @(posedge clk) begin
+        if(we) begin
+            RAM[a[31:2]] <= wd;// word-aligned write (for sw)
+        end
+    end
+endmodule
+
+module mips(input logic clk, reset, output logic[31:0] pc, input logic[31:0] instr, output logic memwrite, output logic[31:0] aluout, writedata, input  logic[31:0] readdata, output logic[12:0] leds);
+    logic memtoreg, pcsrc, zero, alusrc, regwrite, jump, ble, swadd, branch, negative;
+    logic[1:0] regdst;
+    logic[2:0] alucontrol;
+    controller control(instr[31:26], instr[5:0], zero, negative, memtoreg, memwrite, pcsrc, alusrc, regwrite, jump, ble, swadd, branch, regdst, alucontrol);
+    datapath dp(clk, reset, memtoreg, pcsrc, alusrc, regdst, regwrite, jump, ble, swadd, alucontrol, zero, negative, pc, instr, aluout, writedata, readdata);
+    assign leds = {regwrite, regdst, alusrc, branch, memwrite, memtoreg, alucontrol, jump, ble, swadd};
+endmodule
+
+module controller(input logic[5:0] op, funct, input logic zero, negative, output logic memtoreg, memwrite, pcsrc, alusrc, regwrite, jump, ble, swadd, branch, output logic[1:0] regdst, output logic[2:0] alucontrol);
+    logic[1:0] aluop;
+    maindec md(op, memtoreg, memwrite, branch, regwrite, jump, ble, swadd, alusrc, regdst, aluop);
+    aludec ad(funct, aluop, alucontrol);
+    always_comb begin
+	   pcsrc = branch & zero | ble & negative;
+    end
+endmodule
+
+module maindec(input logic[5:0] op, output logic memtoreg, memwrite, branch, regwrite, jump, ble, swadd, alusrc, output logic [1:0]regdst, aluop);
+    logic [11:0] controls;
+    assign {regwrite, regdst, alusrc, branch, memwrite, memtoreg, aluop, jump, ble, swadd} = controls;
+    always_comb begin
+        case(op)
+            6'b000000: controls <= 12'b101000010000;  //R-type
+            6'b100011: controls <= 12'b100100100000;  //lw
+            6'b101011: controls <= 12'b000101000000;  //sw
+            6'b000100: controls <= 12'b000010001000;  //beq
+            6'b001000: controls <= 12'b100100000000;  //addi
+            6'b000010: controls <= 12'b000000000100;  //jump
+            6'b011111: controls <= 12'b000010001010;  //ble
+            6'b111111: controls <= 12'b110101000001;  //swadd
+            default:   controls <= 12'bxxxxxxxxxxxx;  //DON'T CARE
+        endcase
+    end
+endmodule
+
+module aludec(input logic[5:0] funct, input logic[1:0] aluop, output logic[2:0] alucontrol);
+    always_comb begin
+        case(aluop)
+            2'b00: alucontrol  = 3'b010;  // add  (for lw/sw/addi)
+            2'b01: alucontrol  = 3'b110;  // sub   (for beq)
+            default: case(funct)          // R-TYPE instructions
+                6'b100000: alucontrol  = 3'b010; // ADD
+                6'b100010: alucontrol  = 3'b110; // SUB
+                6'b100100: alucontrol  = 3'b000; // AND
+                6'b100101: alucontrol  = 3'b001; // OR
+                6'b101010: alucontrol  = 3'b111; // SLT
+                default:   alucontrol  = 3'bxxx; // UN_DEFINED
+            endcase
+        endcase
+    end
+endmodule
+
+module datapath(input logic clk, reset, memtoreg, pcsrc, alusrc, input logic[1:0] regdst, input logic regwrite, jump, ble, swadd, input logic[2:0] alucontrol, output logic zero, negative, output logic[31:0] pc, input logic[31:0] instr, output logic[31:0] aluout, writedata, input logic[31:0] readdata);
+    logic[4:0] writereg;
+    logic[31:0] pcnext, pcnextbr, pcplus4, pcbranch;
+    logic[31:0] signimm, signimmsh, srca, srcb, result, swaddResult, finalResult;
+    //next PC
+    flopr #(32) pcreg(clk, reset, pcnext, pc);
+    adder pcadd1(pc, 32'b100, pcplus4);
+    sl2 immsh(signimm, signimmsh);
+    adder pcadd2(pcplus4, signimmsh, pcbranch);
+    mux2 #(32) pcbrmux(pcplus4, pcbranch, pcsrc, pcnextbr);
+    mux2 #(32) pcmux(pcnextbr, {pcplus4[31:28], instr[25:0], 2'b00}, jump, pcnext);         
+    //RF
+    regfile rf(clk, reset, regwrite, instr[25:21], instr[20:16], writereg, finalResult, srca, writedata);
+    mux4 #(5) wrmux(instr[20:16], instr[15:11], instr[25:21], instr[25:21], regdst, writereg);
+    mux2 #(32) resmux(aluout, readdata, memtoreg, result);
+    signext se(instr[15:0], signimm);
+    //ALU
+    mux2 #(32) srcbmux(writedata, signimm, alusrc, srcb);
+    alu alu(srca, srcb, alucontrol, aluout, zero, negative);
+    //swadd
+    mux2 #(32) swaddmux(result, swaddResult, swadd, finalResult);
+    adder swaddadder(srca, 32'b100, swaddResult);
+endmodule
+
+
+module regfile(input logic clk, reset, we3, input logic[4:0] ra1, ra2, wa3, input logic[31:0] wd3, output logic[31:0] rd1, rd2);
+    logic[31:0] rf[31:0];
+    //three ported register file: read two ports combinationally
+    //write third port on rising edge of clock. Register0 hardwired to 0.
+    always_ff@(posedge clk, posedge reset) begin
+       if(we3) begin 
+            rf [wa3] <= wd3;	
+        end
+    end
+    assign rd1 = (ra1 != 0) ? rf [ra1] : 0;
+    assign rd2 = (ra2 != 0) ? rf [ra2] : 0;
+endmodule
+
+module adder(input logic[31:0] a, b, output logic[31:0] y);
+    assign y = a + b;
+endmodule
+
+module sl2(input logic[31:0] a, output logic[31:0] y);
+    assign y = {a[29:0], 2'b00}; // shifts left by 2
+endmodule
+
+module signext(input logic[15:0] a, output logic[31:0] y);  
+    assign y = {{16{a[15]}}, a};    // sign-extends 16-bit a
+endmodule
+
+// parameterized register
+module flopr #(parameter WIDTH = 8) (input logic clk, reset, input logic[WIDTH-1:0] d, output logic[WIDTH-1:0] q);
+    always_ff@(posedge clk, posedge reset) begin
+        if(reset) begin
+          q <= 0;
+        end else begin 
+          q <= d;
+        end
+    end
+endmodule
+
+// paramaterized 2-to-1 MUX
+module mux2 #(parameter WIDTH = 8) (input logic[WIDTH-1:0] d0, d1, input logic s, output logic[WIDTH-1:0] y);
+   assign y = s ? d1 : d0;
+endmodule
+
+// paramaterized 4-to-1 MUX
+module mux4 #(parameter WIDTH = 8) (input logic[WIDTH-1:0] d0, d1, d2, d3, input logic[1:0] s, output logic[WIDTH-1:0] y);
+    always_comb begin
+        case(s)
+            2'b00: y <= d0;
+            2'b01: y <= d1;
+            2'b10: y <= d2;
+            2'b11: y <= d3;
+        endcase
+    end
+endmodule
+
+module alu(input logic[31:0] a, b, input logic[2:0] alucont, output logic[31:0] result, output logic zero, negative);
+    always_comb begin  
+        case(alucont)       
+            3'b010: result <= a + b;       
+            3'b110: result <= a - b;               
+            3'b000: result <= a & b;              
+            3'b001: result <= a | b;     
+            3'b111: result <= a < b;
+            default: result <= a;     
+        endcase
+        zero <= (result == 0) ? 1 : 0;  
+        negative <= a < b;
+    end
+endmodule
+
+module imem(input logic [31:0] addr, output logic [31:0] instr);
+    always_comb begin
+        case(addr)
+            32'h00000000: instr = 32'h20020005;
+            32'h00000004: instr = 32'h2003000c;
+            32'h00000008: instr = 32'h2067fff7;
+            32'h0000000c: instr = 32'h00e22025;
+            32'h00000010: instr = 32'h00642824;
+            32'h00000014: instr = 32'h00a42820;
+            32'h00000018: instr = 32'h10a7000a;
+            32'h0000001c: instr = 32'h0064202a;
+            32'h00000020: instr = 32'h10800001;
+            32'h00000024: instr = 32'h20050000;
+            32'h00000028: instr = 32'h00e2202a;
+            32'h0000002c: instr = 32'h00853820;
+            32'h00000030: instr = 32'h00e23822;
+            32'h00000034: instr = 32'hac670044;
+            32'h00000038: instr = 32'h8c020050;
+            32'h0000003c: instr = 32'h08000011;
+            32'h00000040: instr = 32'h20020001;
+            32'h00000044: instr = 32'hac020054;
+            32'h00000048: instr = 32'h7c600000;//ble fail
+            32'h0000004c: instr = 32'hfc030000;//swadd
+            32'h00000050: instr = 32'h7c030001;//ble success
+            32'h00000054: instr = 32'h20020005;//unreachable add
+            32'h00000058: instr = 32'h08000012;//loopz
+            default:  instr = {32{1'bx}};	// unknown address
+        endcase
+    end
+endmodule
+
+
+/////////////////////////////// 
+// PULSE CONTROL
+
+`timescale 1ns / 1ps
+
+module pulse_controller(
+	input  logic CLK, sw_input, clear,
+	output logic clk_pulse );
+
+	 logic [2:0] state, nextstate;
+	 logic [20:0] CNT; 
+	 logic cnt_zero; 
+
+	always_ff @ (posedge CLK, posedge clear)
+	   if(clear)
+	    	state <=3'b000;
+	   else
+	    	state <= nextstate;
+
+	always_comb
+          case (state)
+             3'b000: begin if (sw_input) nextstate = 3'b001; 
+                           else nextstate = 3'b000; clk_pulse = 0; end	     
+             3'b001: begin nextstate = 3'b010; clk_pulse = 1; end
+             3'b010: begin if (cnt_zero) nextstate = 3'b011; 
+                           else nextstate = 3'b010; clk_pulse = 0; end
+             3'b011: begin if (sw_input) nextstate = 3'b011; 
+                           else nextstate = 3'b100; clk_pulse = 0; end
+             3'b100: begin if (cnt_zero) nextstate = 3'b000; 
+                           else nextstate = 3'b100; clk_pulse = 0; end
+            default: begin nextstate = 3'b000; clk_pulse = 0; end
+          endcase
+
+	always_ff @(posedge CLK)
+	   case(state)
+		3'b001: CNT <= 4000000;
+		3'b010: CNT <= CNT-1;
+		3'b011: CNT <= 4000000;
+		3'b100: CNT <= CNT-1;
+	   endcase
+
+//  reduction operator |CNT gives the OR of all bits in the CNT register	
+	assign cnt_zero = ~|CNT;
+
+endmodule
+
+//////////////////////
+// SEV_SEG
+
+`timescale 1ns / 1ps
+
+module display_controller (
+		input logic clk, clear,
+		input logic [3:0] enables, 
+		input logic [3:0] digit3, digit2, digit1, digit0,
+		output logic [3:0] AN,
+		output logic [6:0] C,
+		output logic       DP
+		);
+
+		logic [3:0] current_digit, cur_dig_AN;
+		logic [6:0] segments;
+		
+      assign AN = ~(enables & cur_dig_AN);// AN signals are active low on the BASYS3 board,
+                                // and must be enabled in order to display the digit
+      assign C = ~segments;     // segments must be inverted, since the C values are active low
+      assign DP = 1;            // makes the dot point always off 
+                                // (0 = on, since it is active low)
+
+// the 19-bit counter, runs at 100 MHz, so bit17 changes each 131072 clock cycles, 
+//   or about once each 1.3 millisecond. Turning on and off the digits at this rate will
+//   fool the human eye and make them appear to be on continuously
+	   localparam N=19;
+	   logic [N-1:0] count;
+	always_ff @(posedge clk, posedge clear)
+		if(clear) count <= 0;
+		else count <= count + 1;	
+
+// the upper 2 bits of count will cycle through the digits and the AN patterns
+//  from left to right across the display unit			
+	always_comb
+	   case (count[N-1:N-2])
+                // left most, AN3  
+		2'b00: begin current_digit = digit3; cur_dig_AN = 4'b1000; end  
+		2'b01: begin current_digit = digit2; cur_dig_AN = 4'b0100; end
+		2'b10: begin current_digit = digit1; cur_dig_AN = 4'b0010; end
+		2'b11: begin current_digit = digit0; cur_dig_AN = 4'b0001; end
+                // right most, AN0
+		default: begin current_digit = 4'bxxxx; cur_dig_AN = 4'bxxxx; end
+	   endcase
+
+// the hex-to-7-segment decoder
+	always_comb
+		case (current_digit)
+		4'b0000: segments = 7'b111_1110;  // 0
+		4'b0001: segments = 7'b011_0000;  // 1
+		4'b0010: segments = 7'b110_1101;  // 2
+		4'b0011: segments = 7'b111_1001;  // 3
+		4'b0100: segments = 7'b011_0011;  // 4
+		4'b0101: segments = 7'b101_1011;  // 5
+		4'b0110: segments = 7'b101_1111;  // 6
+		4'b0111: segments = 7'b111_0000;  // 7
+		4'b1000: segments = 7'b111_1111;  // 8
+		4'b1001: segments = 7'b111_0011;  // 9
+		4'b1010: segments = 7'b111_0111;  // A
+		4'b1011: segments = 7'b001_1111;  // b
+		4'b1100: segments = 7'b000_1101;  // c
+		4'b1101: segments = 7'b011_1101;  // d
+		4'b1110: segments = 7'b100_1111;  // E
+		4'b1111: segments = 7'b100_0111;  // F
+		default: segments = 7'bxxx_xxxx;
+		endcase		
+endmodule
+
+
+// CONSTRUIIIIR
+
+set_property PACKAGE_PIN W5 [get_ports clk]
+set_property IOSTANDARD LVCMOS33 [get_ports clk]
+create_clock -add -name sys_clk_pin -period 10.00 -waveform {0 5} [get_ports clk]
+
+set_property PACKAGE_PIN W19 [get_ports reset]						
+	set_property IOSTANDARD LVCMOS33 [get_ports reset]
+	
+set_property PACKAGE_PIN U18 [get_ports switch]
+    set_property IOSTANDARD LVCMOS33 [get_ports switch]
+
+set_property PACKAGE_PIN U17 [get_ports clear]						
+    set_property IOSTANDARD LVCMOS33 [get_ports clear]
+    
+set_property PACKAGE_PIN U16 [get_ports {LED[0]}]
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[0]}]
+set_property PACKAGE_PIN E19 [get_ports {LED[1]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[1]}]
+set_property PACKAGE_PIN U19 [get_ports {LED[2]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[2]}]
+set_property PACKAGE_PIN V19 [get_ports {LED[3]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[3]}]
+set_property PACKAGE_PIN W18 [get_ports {LED[4]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[4]}]
+set_property PACKAGE_PIN U15 [get_ports {LED[5]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[5]}]
+set_property PACKAGE_PIN U14 [get_ports {LED[6]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[6]}]
+set_property PACKAGE_PIN V14 [get_ports {LED[7]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[7]}]
+set_property PACKAGE_PIN V13 [get_ports {LED[8]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[8]}]
+set_property PACKAGE_PIN V3 [get_ports {LED[9]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[9]}]
+set_property PACKAGE_PIN W3 [get_ports {LED[10]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[10]}]
+set_property PACKAGE_PIN U3 [get_ports {LED[11]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[11]}]
+set_property PACKAGE_PIN P3 [get_ports {LED[12]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {LED[12]}]
+           
+set_property PACKAGE_PIN W7 [get_ports {cathode[6]}]					
+    set_property IOSTANDARD LVCMOS33 [get_ports {cathode[6]}]
+set_property PACKAGE_PIN W6 [get_ports {cathode[5]}]                    
+    set_property IOSTANDARD LVCMOS33 [get_ports {cathode[5]}]
+set_property PACKAGE_PIN U8 [get_ports {cathode[4]}]                    
+     set_property IOSTANDARD LVCMOS33 [get_ports {cathode[4]}]
+set_property PACKAGE_PIN V8 [get_ports {cathode[3]}]                    
+     set_property IOSTANDARD LVCMOS33 [get_ports {cathode[3]}]
+set_property PACKAGE_PIN U5 [get_ports {cathode[2]}]                    
+     set_property IOSTANDARD LVCMOS33 [get_ports {cathode[2]}]
+set_property PACKAGE_PIN V5 [get_ports {cathode[1]}]                    
+     set_property IOSTANDARD LVCMOS33 [get_ports {cathode[1]}]
+set_property PACKAGE_PIN U7 [get_ports {cathode[0]}]                    
+     set_property IOSTANDARD LVCMOS33 [get_ports {cathode[0]}]
+                
+set_property PACKAGE_PIN V7 [get_ports DP]                            
+    set_property IOSTANDARD LVCMOS33 [get_ports DP]
+        
+set_property PACKAGE_PIN U2 [get_ports {anode[0]}]                    
+     set_property IOSTANDARD LVCMOS33 [get_ports {anode[0]}]
+set_property PACKAGE_PIN U4 [get_ports {anode[1]}]                    
+     set_property IOSTANDARD LVCMOS33 [get_ports {anode[1]}]
+set_property PACKAGE_PIN V4 [get_ports {anode[2]}]                    
+     set_property IOSTANDARD LVCMOS33 [get_ports {anode[2]}]
+set_property PACKAGE_PIN W4 [get_ports {anode[3]}]                    
+     set_property IOSTANDARD LVCMOS33 [get_ports {anode[3]}]
+
+// TESTBENCH
+
+`timescale 1ns / 1ps
+
+module testbench();
+    logic clk, reset, memwrite;
+    logic[31:0] writedata, dataadr, pc, instr;
+    logic[12:0] leds;
+    
+    top testMips(clk, reset, writedata, dataadr, pc, instr, memwrite, leds);
+    
+    always begin
+        clk = 0; #10;
+        clk = 1; #10;
+    end
+    
+    initial begin
+        reset = 1; #10;
+        reset = 0; #10;
+    end
+endmodule
+
+
+
+//CS224 PRELIMINARY REPORT
+
+
+
+Spring 2018
+Section NO: 1
+Lab NO: 5
+Student Name/ID: Doða Oruç, 21602022
+Student Name/ID: Deniz Yüksel, 21600880
+
+
+
+
+
+
+
+1.	Write the Register Transfer Level (RTL) expressions for the “ble” and “sw+” instructions that you are adding, including the fetch and the updating of the PC.
+
+RTL For “ble”:
+IM[PC];
+if(RF[rs] <= RF[rt])
+PC <- PC + 4 +[SignExt(imm) << 2];
+else
+	PC <- PC + 4;
+
+RTL For “sw+”:
+IM[PC];
+DM[RF[rs] + SignExt(imm)] <- RF[rt];
+RF[rs] <- RF[rs] + 4;
+PC <- PC + 4;
+
+
+
+2.	Make any additions or changes to the datapath which are needed in order to make the RTLs for the instructions possible. The base datapath should be in black, with changes marked in red or other colors (one color per new instruction). You can take a photo/scan your modified datapath and add it to your Preliminary Report, as long as the changes you have done are clear and understandable.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+3.	Make a new row in the main control table for “ble” and “sw+”, and if necessary add new columns for any new control signals that are needed (input or output). Be sure to completely fill in the table—all values must be specified.  If any changes are needed in the ALU decoder table, give this table in its new form (with new rows, columns, etc). The base table should be in black, with changes marked in red or other colors.
+
+Instruction	Opcode	RegWrite	RegDst	ALUSrc	Branch	MemWrite	MemtoReg	ALUOp	Jump	BLE	SwAdd
+R-type	000000	1	1	0	0	0	0	10	0	0	0
+lw	100011	1	0	1	0	0	1	00	0	0	0
+sw	101011	0	X	1	0	1	X	00	0	0	0
+beq	000100	0	X	0	1	0	X	01	00	0	0
+addi	001000	1	0	1	0	0	0	00	0	0	0
+j	000010	0	X	X	X	0	X	XX	1	0	0
+ble	011111	0	X	0	1	0	X	01	0	1	0
+sw+	111111	1	0	1	0	1	X	00	0	0	1
+
+
+
+
+4.	Write a test program in MIPS assembly language, that will show whether the new instructions are working or not , and that will confirm that all existing old instructions still continue to work. Don’t use any pseudo-instructions; use only real MIPS instructions that will be recognized by the new control unit. 
+
+As written in the Instruction Memory(IMEM):
+
+            32'h00000000: instr = 32'h20020005;
+            32'h00000004: instr = 32'h2003000c;
+            32'h00000008: instr = 32'h2067fff7;
+            32'h0000000c: instr = 32'h00e22025;
+            32'h00000010: instr = 32'h00642824;
+            32'h00000014: instr = 32'h00a42820;
+            32'h00000018: instr = 32'h10a7000a;
+            32'h0000001c: instr = 32'h0064202a;
+            32'h00000020: instr = 32'h10800001;
+            32'h00000024: instr = 32'h20050000;
+            32'h00000028: instr = 32'h00e2202a;
+            32'h0000002c: instr = 32'h00853820;
+            32'h00000030: instr = 32'h00e23822;
+            32'h00000034: instr = 32'hac670044;
+            32'h00000038: instr = 32'h8c020050;
+            32'h0000003c: instr = 32'h08000011;
+            32'h00000040: instr = 32'h20020001;
+            32'h00000044: instr = 32'hac020054;
+            32'h00000048: instr = 32'h7c600000;//ble fail
+            32'h0000004c: instr = 32'hfc030000;//swadd
+            32'h00000050: instr = 32'h7c030001;//ble success
+            32'h00000054: instr = 32'h20020005;//unreachable add
+            32'h00000058: instr = 32'h08000012;//loopz
+
+Converted to MIPS Assembly:
+
+1.	addi $2,$0,5	#$2 is now equal to 5.
+2.	addi $3,$0,12	#$3 is now equal to 12.
+3.	addi $7,$3,-9	#$7 is now equal to 12 – 9( = 3).
+4.	or   $4,$7,$2	#$4 is now equal to 3 | 5 ( = 7).
+5.	and  $5,$3,$4	#$5 is now equal to 12 & 7 ( = f).
+6.	add  $5,$5,$4	#$5 is now equal to f + 7 ( = 16).
+7.	beq  $5,$7,0x44	#Do not branch.
+8.	slt  $4,$3,$4	#$4 is now equal to 0, for $3 > $4 (12 > 3).
+9.	beq  $4,$0,0x28	#Branch to the address of 0x28(To line 11).
+10.	addi $5,$0,0	#Unreachable statement.
+11.	slt  $4,$7,$2	#$4 is now equals to 1, for $7 < $2 (3 < 5).
+12.	add  $7,$4,$5	#$7 is now equal to 1 + 5 ( = 6).
+13.	sub  $7,$7,$2	#$7 is now equal to 6 – 5 ( = 1).
+14.	sw   $7,68($3) 	#68 ($3) [ or  just $20] is now equal to 1.
+15.	lw   $2,80($0) 	#$7 is now equals to 80 ($0) [ or just $20] ( = 1).
+16.	j    0x44		#Jump to the address of 0x44(To line 18).
+17.	addi $2,$0,1	#Unreachable statement.
+18.	sw   $2,84($0) 	#84 ($0) [ or just $21] is now equal to 5.
+19.	ble  $3 $0 0x48	#Do not branch. (12 > 0)
+20.	sw+  $3 0($0)	#$0 is now equal to 12, $3 is now 16.
+21.	ble  $0 $3 0x48	#Branch to the address of 0x58. (12 < 16)
+22.	addi $2,$0,5	#Unreachable due to the branch operation in line 21.
+23.	j    0x48		#Jump to the address of 0x48(To line 19)(Inf. loop).
+
+
+
+
+
+
+
+
+
+
+
+5.	Write a list of the System Verilog modules that will need changes in order to make these new instructions part of the single-cycle MIPS processor’s instruction set. For each module in the list, determine the new System Verilog model that will be needed in order for the instructions to be added.  Give the System Verilog code for each module that needs to be changed.
+
+This part is a little messy, because we didn’t want to include all the modules and all of their contents, intead we only included the new parts. So please don’t mind.
+
+New modules in the extended MIPS- Lite Processor:
+
+module alu(input logic[31:0] a, b, input logic[2:0] alucont, output logic[31:0] result, output logic zero, negative);
+always_comb begin
+case(alucont)       
+3'b010: result <= a + b;       
+3'b110: result <= a - b;               
+3'b000: result <= a & b;              
+3'b001: result <= a | b;     
+     			3'b111: result <= a < b;
+      		default: result <= a;     
+    		endcase
+      		zero <= (result == 0) ? 1 : 0;  
+      		negative <= a < b;
+    	end
+endmodule
+
+module mux4 #(parameter WIDTH = 8) (input logic[WIDTH-1:0] d0, d1, d2, d3, input logic[1:0] s, output logic[WIDTH-1:0] y);
+always_comb begin
+case(s)
+2'b00: y <= d0;
+2'b01: y <= d1;
+ 	   			2'b10: y <= d2;
+  	  			2'b11: y <= d3;
+ 	  		endcase
+		end
+endmodule
+
+
+// In the datapath, multiplexer to determine register written ( before it was rd or rd) changes. Now it has another input because regdst is 2 bits.
+module datapath(input  logic clk, reset, memtoreg, pcsrc, alusrc, input logic [1:0] regdst, input  logic regwrite, jump, blt, swplus, logic[2:0]  alucontrol, output logic zero, negative, output logic[31:0] pc, input  logic[31:0] instr, output logic[31:0] aluout, writedata, input logic[31:0] readdata);
+
+		…
+mux4 #(5) wrmux (instr[20:16], instr[15:11], instr[25:21], instr[25:21], regdst, writereg);
+// For sw+, an adder is needed for rs:
+adder swplusadder(srca, 32'b100, srcaplus4);
+…
+
+endmodule
+
+// Main decoder for the control unit has changed. ble and sw+ are added.
+module maindec(input logic[5:0] op, output logic memtoreg, memwrite, branch, output logic alusrc, output logic[1:0]regdst, output logic regwrite, jump, swplus, output logic[1:0] aluop );
+logic[11:0] controls;
+assign {regwrite, regdst, alusrc, branch, memwrite, memtoreg, aluop, jump, blt, swplus} = controls;
+  		always_comb begin
+    			case(op)
+      			6'b000000: controls <= 12'b101000010000;// R-type
+      			6'b100011: controls <= 12'b100100100000;//lw
+6'b101011: controls <= 12'b000101000000;//sw
+6'b000100: controls <= 12'b000010001000;//beq
+6'b001000: controls <= 12'b100100000000;//addi
+6'b000010: controls <= 12'b000000000100;//jump
+6'b011111: controls <= 12'b000010001010;//ble
+6'b111111: controls <= 12'b110101000001;//sw+
+default:   controls <= 12'bxxxxxxxxxxxx;//illegal op
+    			endcase
+		end
+endmodule
+
+// The controller has changed:
+module controller(input logic[5:0] op, funct, input  logic zero, input logic negative, output logic memtoreg, memwrite, logic pcsrc, alusrc, output logic[1:0] regdst, output logic regwrite, output logic jump, output logic blt, swplus, output logic[2:0] alucontrol, output logic branch);
+   		logic [1:0] aluop;
+maindec md(op, memtoreg, memwrite, branch, alusrc, regdst, regwrite, jump, blt, swplus, aluop);
+   		aludec ad(funct, aluop, alucontrol);
+   		always_comb begin
+pcsrc = branch & zero | blt & negative;
+end
+endmodule
+

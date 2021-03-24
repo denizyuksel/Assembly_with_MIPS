@@ -1,0 +1,341 @@
+# DENÝZ YÜKSEL PRELIMINARY CODE
+
+#Solution of PART 1:
+
+	.text
+.globl __start	
+__start:
+	# Print out the request.
+	li $v0, 4
+	la $a0, prompt
+	syscall 
+	# Get the number of elements the user will want in the array.
+	li $v0, 5
+	syscall
+	# Store the number of elements inside $t0.
+	move $t0, $v0
+	# Also in $t4 and $t5, store the number of elements for later use.
+	addi $t4, $t0, 0
+	addi $t5, $t0, 0
+	# Load the array to $t1.
+	la $t1, array 
+	li $v0, 4
+	la $a0, askForInt
+	syscall
+	# Loop for getting all the elements to the array.
+Loop1:	
+	li $v0, 5
+	syscall
+	move $t2, $v0
+	sw $t2, 0($t1)
+	addi $t0, $t0, -1
+	addi $t1, $t1, 4
+	bgt $t0, $zero, Loop1
+	
+	mul $t4, $t4, 4 	# RECOVER $t4.
+	sub $t1, $t1, $t4 	# $t1 = $t1 - 4*$t4
+	li $v0, 4
+	la $a0, printListMsg
+	syscall
+Loop2:	
+	li $v0, 1
+	lw $a0, 0($t1)
+	syscall
+	addi $t1, $t1, 4
+	addi $t4, $t4, -4
+	bgt $t4, $zero, Loop2
+	li $v0, 4
+	la $a0, printReverseMsg
+	syscall
+	addi $t1, $t1, -4 # There is a bug in $t1. It points to 0 after Loop2.
+ReversePrint:
+	li $v0, 1
+	lw $a0, 0($t1)
+	syscall
+	addi $t1, $t1, -4
+	addi $t5, $t5, -1
+	bgt $t5, $zero, ReversePrint
+	.data
+array: 		.space 80
+prompt: 	.asciiz " Please enter the number of elements you want in the array. Maximum is 20: "
+askForInt: 	.asciiz " \n Enter your integers. Each time, press enter: "
+printListMsg:	.asciiz " \n Printing your list..."
+printReverseMsg:.asciiz " \n Now printing in REVERSE! "
+
+
+#Solution of PART 2:
+
+	.text
+	.globl __start
+	
+__start:
+	
+	# Store ( c - d).
+	lw $t1, c
+	lw $t2, d
+	# Finding absolute value of ( c - d)...
+	
+	bgt $t1, $t2, cGreater 
+	blt $t1, $t2, cLesser
+	
+cGreater: 
+	sub $t3, $t1, $t2
+	sw $t3, y 	# Store $t3 in y.
+	li $v0, 4
+	la $a0, cBigger	
+	syscall
+	
+	# Print the value of c - d.
+	li $v0, 1
+	lw $a0, y
+	syscall
+	
+	jal SubtractTwoUntil
+	# NOW FINALLY FINDING MOD 2
+		
+cLesser:
+	sub $t3, $t2, $t1
+	sw $t3, y
+	li $v0, 4
+	la $a0, cSmaller
+	syscall
+	
+	# Print the value of d - c.
+	li $v0, 4
+	la $a0, absoluteValue
+	syscall
+	li $v0, 1
+	lw $a0, y
+	syscall
+		
+	jal SubtractTwoUntil
+	# NOW FINALLY FINDING MOD 2
+	
+SubtractTwoUntil:
+	addi $t3, $t3, -2
+	bgt $t3, 1, SubtractTwoUntil
+	sw $t3, x	# Store $t3 in x.
+	
+	li $v0, 4
+	la $a0, finalValue
+	syscall
+	li $v0, 1
+	lw $a0, x
+	syscall
+	
+	beq $t3, 1, OddResult
+	beq $t3, 0, EvenResult
+	
+OddResult:
+	li $v0, 4
+	la $a0, oddReport
+	syscall
+	li $v0, 10
+	syscall
+	
+EvenResult:
+	li $v0, 4
+	la $a0, evenReport
+	syscall	
+	li $v0, 10
+	syscall
+
+	.data
+c: .word -25
+d: .word 8
+x: .word 0
+y: .word 0 #absolute value
+oddReport: .asciiz " \n | c - d| is an odd number. ( c - d) % 2 is 1. "
+evenReport: .asciiz " \n | c - d|  is an even number. ( c - d) % 2 is 0. "
+cBigger: .asciiz " \n C is greater than D "
+cSmaller: .asciiz " \n C is smaller than D "
+absoluteValue: .asciiz " \n Absolute value is "
+finalValue: .asciiz " \n Final value is \n "
+
+# DENÝZ YÜKSEL LAB 1 PART 4
+
+	.text
+	.globl __start
+__start:
+
+	li $v0, 4
+	la $a0, prompt
+	syscall
+
+	li $v0, 5
+	syscall
+	move $t1, $v0 # For x1, use $t1.
+	
+	li $v0, 5
+	syscall
+	move $t2, $v0 # For x2, use $t2.
+	
+x1Squared:
+	mul $t1, $t1, $t1
+	sw $t1, x1
+	
+x2Over3:
+	div $t2, $t2, -3
+	sw $t2, x2
+
+AddAndAddOne:
+	add $t3, $t1, $t2
+	addi $t3, $t3, 1
+TakeMode2:
+	div $t3, $t3, 2
+	mfhi $t4 # Store the result of % 2 inside $t4.
+	sw $t4, f
+	
+	li $v0, 4
+	la $a0, statement
+	syscall
+	
+	li $v0, 1
+	lw $a0, f
+	syscall
+	
+	.data
+x1:	.word 0
+x2:	.word 0
+f:	.word 0
+prompt:	.asciiz " Enter two integers to compute the result of f( x1, x2) = ( x1^2 - (x2/3) + 1) : \n"
+statement: .asciiz " Result is "
+
+
+##################################
+# DENÝZ YÜKSEL LAB 01 PART 5
+	.text
+	.globl __start
+__start:
+	# Introduce.
+	li $v0, 4
+	la $a0, welcome
+	syscall
+	la $a0, enterNum
+	syscall
+	
+	# Read and store the number of elements.
+	li $v0, 5
+	syscall
+	# Store array size in $t0
+	move $t0, $v0 # Temporary array size for initializing.
+	move $t7, $v0 # Back-up array size.
+	move $s1, $v0 #BACK UP ARRAY SIZE
+	#???sw $t0, arraySize
+	# Load array to $t1.
+	la $t1, array
+	# Load array to $t9 for backup.
+	la $t9, array
+	la $s0, array
+	
+	li $v0, 4
+	la $a0, enterInputs
+	syscall
+	
+InitLoop:
+	li $v0, 5
+	syscall
+	
+	move $t2, $v0
+	sw $t2, 0($t1)
+	addi $t0, $t0, -1
+	addi $t1, $t1, 4
+	bgt $t0, $zero, InitLoop
+	# LAST ELEMENT IS IN $t1.
+	
+MENU:	
+	li $v0, 4
+	la $a0, ChoiceMenu
+	syscall
+	
+	# Read a char.
+	li $v0, 12
+	syscall
+	
+	# Store the ascii value of the char in $t0.
+	move $t0, $v0 
+	
+	beq $t0, 65, A
+	beq $t0, 66, B
+	beq $t0, 67, C
+	beq $t0, 68, D
+	# FORCE THE USER TO ENTER A, B, C OR D CAPITAL.
+	j MENU
+A:
+ 	move $t7, $s1
+ 	move $t9, $s0
+ 	move $t4, $zero	
+ 
+SumLoop:
+	lw $t8 ,0($t9)
+	bgt $t7, $t8, if	 	
+	add $t4, $t4, $t8 
+if:
+	addi $t9, $t9, 4
+	bgt $t1, $t9, SumLoop 
+	
+	li $v0, 4
+	la $a0, sumMsg
+	syscall
+	
+	li $v0, 1
+	move $a0, $t4
+	syscall
+	
+	j MENU
+B:
+	move $t7, $s1
+ 	move $t9, $s0
+ 	move $t6, $zero # Even sum is initialized.
+ 	move $t4, $zero	# Odd sum is initialized.
+	# Sumation of odd numbers in the array:
+	
+	lw $s2, 0($t9)
+	andi $t5, $s2, 1
+	beq $s2, 1, Odds
+	beq $s2, 0, Evens
+Evens:
+	add $t6, $s2, $s2 
+	addi $t7, $t7, -1
+	bgt $t7, $zero, Evens
+	
+	li $v0, 1
+	move $a0, $t6
+	syscall
+	
+Odds:
+	add $t4, $s2, $s2 
+	addi $t7, $t7, -1
+	bgt $t7, $zero, Odds
+	li $v0, 1
+	move $a0, $t4
+	syscall
+	
+	 
+	# Sumation of even numbers in the array: 
+	
+	j MENU
+C:
+	move $t7, $s1
+ 	move $t9, $s0
+ 	move $t4, $zero	
+ 	
+	j MENU
+
+D:	# QUIT
+	li $v0, 4
+	la $a0, QuitMsg
+	syscall
+	
+	li $v0, 10
+	syscall
+	
+	.data
+array:		.space 400
+arraySize:	.word 0
+welcome: 	.asciiz " Welcome to Lab 1. Please type in a number which will be the number of elements in your array. Maximum is 100."
+enterNum:	.asciiz " \n Enter a number then: "
+enterInputs:	.asciiz " Enter your numbers by typing in and pressing enter: \n "
+QuitMsg:	.asciiz " Bye! "
+sumMsg:		.asciiz " Sum is "
+ChoiceMenu:	.asciiz " Type in A to find the sumation of numbers stored in the array which is greater than an input number. \n Type in B to find the sumation of even numbers and odd numbers separately.\n Type in C to display the number of occurrences of the array elements divisible by a certain input number. \n Type in D to quit. \n" 

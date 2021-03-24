@@ -1,0 +1,50 @@
+// CS 224- SECTION 1
+// DENÝZ YÜKSEL 21600880
+// PRELIMINARY CODE SUBMISSION
+
+// ANSWER FOR PART 1
+
+If a processor is single- cycle, it means that each instruction in the processor is executed in one clock period. This creates a drawback compared to the multi- cycle processor in terms of time efficiency. For example, j instruction takes less time than lw but if the processor is single- cycle, the j instruction takes the same time as lw because critical time is dependent to the longest instruction in the instruction set. On the other hand, multi- cycle processors divide the instructions to subsets, which are smaller instructions, which allows a fast instruction not to wait for slower ones. These smaller instructions are fetch, decode, execute, memory and write back. The difference of pipelining with single and multi- cycle designs is that in latter items, instructions occur sequentially, meaning that each instruction has to wait for the previous to be completed. However, in pipelining, more than one instruction can happen at the same time just like you can use a washing machine, a drying machine, and an iron at the same time. Thus, pipelining introduces us parallelism.
+
+
+// ANSWER FOR PART 2
+
+In the datapath of the processor the modules are instruction memory, register file, data memory and sign extend module. Instruction memory takes a 32 bit value from the PC which holds the address of the current instruction. Then, the IM divides the 32 bit value into parts and sends them to different modules. The leftmost 6 bits, which makes the opcode becomes the input of the control unit. Also, the rightmost 6 bits are also sent to the control unit as the function input for R- type instructions. In control unit there is a main controller which is a finite state machine, which takes the opcode and outputs are enable outputs of MemToReg, MemWrite, Branch, ALUSrc, RegDst, RegWrite and ALUOp1:0. Basically, the control unit decides the high and low outputs for the current instruction from its opcode. In the datapath, register file holds the values of A1, A2, A3 and WD3. WD3 will be used if there is a writing to the memory, in the case when MemWrite is high, and sw instruction can be an example for that.  A1 has rs, A2 has rt, and A3 can either have rt or rd depending on the instruction. The outputs of the register file are RD1 carries the value of A1 to the ALU and RD2 carries the value of A2 or the sign- extended immediate value. In the meantime the ALU gets which operation will be used to these two values.  The third element of the datapath is data memory. Data memory has A and WD inputs which are used for ALU result and Write Data, and an output or RD which is Read Data. A is the destination address of the instruction and write data input contains the data that will be written to the memory. The output Read Data is used when MemtoReg is high, which happens when the operation both uses data memory and write that memory to a register. In this case, an example can be load word instruction.  
+
+
+// CODE FOR PART 3
+
+Instruction_Memory( input [6]A, output [32]RD)	
+
+Register_File( input logic CLK, WE3, input [5]A1, input [5]A2, input [5]A3, input [32]WD3, output [32]RD1, output [32]RD2);
+
+Data_Memory( input logic CLK, WE, input [32]A, input [32]WD, output [32]RD);
+
+Control_Unit( input [6]opcode, input [6]funct, output MemtoReg, MemWrite, Branch, ALUSrc, RegDst, RegWrite, output [3]ALUControl);
+
+ALU_32_Bit( input [32]SrcA, SrcB, input [3]ALUControl, output zero, output [32]ALUResult);
+
+
+// CODE FOR PART 4
+
+Location	Machine instruction ( hex)	Assembly Language
+0x00400000	20020005	ADDI $v0, $zero, 5
+0x00400004	2003000c	ADDI $v1, $zero, 12
+0x00400008	2067fff7	ADDI $a3, $v1, -9
+0x0040000c	00e22025	OR $a0, $a3, $v0
+0x00400010	00642824	AND $a1, $v1, $a0
+0x00400014	00a42820	AND $a1, $a1, $a0
+0x00400018	10a7000a	BEQ $a1, $a3, 0x000A
+0x0040001c	0064202a	SLT $a0, $v1, $a0
+0x00400020	10800001	BEQ $a0, $zero, 0x0001
+0x00400024	20050000	ADDI $a1, $zero, 0
+0x00400028	00e2202a	SLT $a0, $a3, $v0
+0x0040002c	00853820	ADD $a3, $a0, $a1
+0x00400030	00e23822	SUB $a3, $a3, $v0
+0x00400034	ac670044	SW $a3, 68, $v1
+0x00400038	8c020050	LW $v0, 80, $zero
+0x0040003c	08000011	J 0x00000011
+0x00400040	20020001	ADDI $v0, $zero, 1
+0x00400044	ac020054	SW, $v0, 84, $zero
+0x00400048	08000012	J 0x00000012
+
